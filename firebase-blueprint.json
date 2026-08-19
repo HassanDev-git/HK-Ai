@@ -1,0 +1,72 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Represents a user in the application.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "firstName": { "type": "string" },
+        "communicationStyle": { "type": "string" },
+        "referralSource": { "type": "string" },
+        "onboardingComplete": { "type": "boolean" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Thread": {
+      "title": "Chat Thread",
+      "description": "A conversation between a user and the AI.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "title", "createdAt"]
+    },
+    "Message": {
+      "title": "Chat Message",
+      "description": "A single message within a chat thread.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "assistant"] },
+        "content": { "type": "string" },
+        "type": { "type": "string", "enum": ["default", "youtube", "search"] },
+        "reasoning": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "isResearching": { "type": "boolean" },
+        "researchSteps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": { "type": "string" },
+              "status": { "type": "string", "enum": ["pending", "loading", "completed"] }
+            }
+          }
+        }
+      },
+      "required": ["id", "role", "content", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Public and private user profile data."
+    },
+    "/users/{userId}/threads/{threadId}": {
+      "schema": "Thread",
+      "description": "Chat threads belonging to a user."
+    },
+    "/users/{userId}/threads/{threadId}/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Individual messages within a thread."
+    }
+  }
+}
