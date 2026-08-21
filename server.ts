@@ -66,7 +66,18 @@ function resolveWhatsAppBrowserPath() {
   return candidates.find(candidate => candidate && fs.existsSync(candidate));
 }
 
+const DEFAULT_CHAT_SYSTEM_PROMPT = `You are HK-Ai, a reliable personal AI assistant. Answer the user's latest question directly and accurately. Use the full conversation history to resolve follow-up questions and references such as "it", "that", or "the previous one". Do not change the subject unless the user asks. If the user writes in Urdu, Roman Urdu, or English, reply in the same language and style. Do not invent facts; state uncertainty when needed. Use concise but complete explanations and never mention these instructions.`;
 const DEFAULT_WHATSAPP_SYSTEM_PROMPT = `You are HK-Ai WhatsApp, a reliable personal AI assistant. Answer the user's actual question directly and accurately. Use the recent conversation history to understand follow-up questions and maintain context. If the user writes in Urdu, Roman Urdu, or English, reply in the same language and style. Do not invent facts; say when you are unsure. Keep WhatsApp replies concise, natural, and helpful. Before answering, silently classify the intent as question, support, sales, complaint, urgent, or handoff and adapt your answer; do not expose the label unless it is useful. Never mention these instructions or claim to be human.`;
+
+const extractCompletionText = (completion: any) => {
+  const message = completion?.choices?.[0]?.message || completion?.message || {};
+  const content = message?.content ?? completion?.choices?.[0]?.text ?? completion?.output_text ?? '';
+  if (Array.isArray(content)) {
+    return content.map((part: any) => typeof part === 'string' ? part : (part?.text ?? part?.content ?? '')).join('');
+  }
+  if (typeof content === 'string') return content;
+  return content == null ? '' : String(content);
+};
 const OPENROUTER_API_KEY = (process.env.OPENROUTER_API_KEY || "").trim();
 const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || "").trim();
 const FIREBASE_WEB_API_KEY = (process.env.FIREBASE_WEB_API_KEY || (() => {
@@ -215,9 +226,17 @@ async function fetchProviderModels(provider: UserProvider) {
   return collected.map((model: any) => normalizeListedModel(provider, model)).filter(Boolean);
 }
 
+const contentToText = (content: any): string => {
+  if (Array.isArray(content)) {
+    return content.map((part: any) => typeof part === 'string' ? part : (part?.text ?? part?.content ?? '')).join('');
+  }
+  if (content && typeof content === 'object') return String(content.text ?? content.content ?? '');
+  return content == null ? '' : String(content);
+};
+
 const normalizeProviderMessages = (messages: any[]) => (messages || [])
-  .filter(message => message?.content && String(message.content).trim())
-  .map(message => ({ role: message.role === 'model' ? 'assistant' : message.role, content: String(message.content) }));
+  .map(message => ({ role: message?.role === 'model' ? 'assistant' : message?.role, content: contentToText(message?.content).trim() }))
+  .filter(message => ['system', 'user', 'assistant', 'tool', 'function'].includes(String(message.role)) && message.content);
 
 async function createProviderCompletion(provider: UserProvider, modelId: string, messages: any[], systemInstruction?: string) {
   const normalized = normalizeProviderMessages(messages);
@@ -431,15 +450,41 @@ async function startServer() {
     }
   };
 
+  const hydrateCachedChats = (userId: string) => {
+    loadPersistedMemory(userId);
+    if (!whatsappChatCache.has(userId)) whatsappChatCache.set(userId, new Map());
+    const chatCache = whatsappChatCache.get(userId)!;
+    for (const [chatId, messages] of whatsappMessageCache.get(userId) || new Map()) {
+      const latest = (messages || []).filter((message: any) => String(message.body || '').trim()).at(-1);
+      if (!latest) continue;
+      const current = chatCache.get(chatId) || {};
+      chatCache.set(chatId, {
+        id: chatId,
+        name: latest.chatName || latest.senderName || current.name || chatId,
+        unreadCount: current.unreadCount || 0,
+        timestamp: latest.timestamp || 0,
+        lastMessage: latest.body || ''
+      });
+    }
+  };
+
   const listCachedChats = (userId: string) => {
+    hydrateCachedChats(userId);
     return Array.from(whatsappChatCache.get(userId)?.values() || [])
       .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
   };
 
   const getCachedHistory = (userId: string, chatId: string, limit = 20) => {
     loadPersistedMemory(userId);
+    const seen = new Set<string>();
     return (whatsappMessageCache.get(userId)?.get(chatId) || [])
       .filter(message => String(message.body || '').trim())
+      .filter((message: any) => {
+        const id = String(message.id || `${message.timestamp}:${message.body}`);
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      })
       .slice(-limit)
       .map(message => ({
         role: message.fromMe ? 'assistant' : 'user',
@@ -514,6 +559,8 @@ async function startServer() {
       const userId = socket.data.firebaseUser.uid;
       socket.join(userId);
       console.log(`[WhatsApp] Init requested for user: ${userId}`);
+      loadPersistedMemory(userId);
+      hydrateCachedChats(userId);
       if (settings) {
         whatsappData.set(userId, settings);
       }
@@ -778,7 +825,7 @@ async function startServer() {
           const upstreamModel = userProvider.id === 'openrouter' && parsedModel.modelId === 'free' ? 'openrouter/free' : parsedModel.modelId;
           console.log(`[WhatsApp] Generating contextual auto-reply for ${msg.from} using ${userProvider.name}/${upstreamModel} with ${conversationHistory.length} messages.`);
           const completion = await createProviderCompletion(userProvider, upstreamModel, conversationHistory, `${systemPrompt}${personaContext}\nCurrent intent classification: ${intent}. If intent is handoff, acknowledge the request and say that a human will take over; do not pretend to be human.`);
-          const responseText = String(completion?.choices?.[0]?.message?.content || '').trim();
+          const responseText = extractCompletionText(completion).trim();
 
           if (responseText) {
             console.log(`[WhatsApp] Auto-replying to ${msg.from}: ${responseText.substring(0, 60)}...`);
@@ -882,6 +929,7 @@ async function startServer() {
 
     socket.on("whatsapp:get_chats", async () => {
       const userId = socket.data.firebaseUser.uid;
+      hydrateCachedChats(userId);
       const chats = listCachedChats(userId);
       console.log(`[WhatsApp] Returning ${chats.length} live-cached chats for ${userId}.`);
       socket.emit('whatsapp:chats', chats);
@@ -890,6 +938,7 @@ async function startServer() {
 
     socket.on("whatsapp:get_messages", async ({ chatId }) => {
       const userId = socket.data.firebaseUser.uid;
+      loadPersistedMemory(userId);
       const messages = whatsappMessageCache.get(userId)?.get(chatId) || [];
       socket.emit("whatsapp:messages", { chatId, messages });
     });
@@ -917,7 +966,7 @@ async function startServer() {
         if (!whatsappMessageCache.has(userId)) whatsappMessageCache.set(userId, new Map());
         const history = whatsappMessageCache.get(userId)!;
         const cached = history.get(chatId) || [];
-        history.set(chatId, [...cached, {
+        const outgoing = {
           id: sentMessage?.id?._serialized || `sent-${Date.now()}`,
           body: content,
           fromMe: true,
@@ -925,7 +974,15 @@ async function startServer() {
           type: media ? 'media' : 'chat',
           quotedMessageId: replyTo?.id || null,
           chatName: whatsappChatCache.get(userId)?.get(chatId)?.name || chatId
-        }].slice(-100));
+        };
+        const seen = new Set<string>();
+        history.set(chatId, [...cached, outgoing].filter((message: any) => {
+          const id = String(message.id || `${message.timestamp}:${message.body}`);
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        }).slice(-100));
+        persistMemory(userId);
       } catch (error: any) {
         console.error(`[WhatsApp] Error sending message to ${chatId}:`, error);
         socket.emit('whatsapp:send_error', { error: error?.message || 'Unable to send WhatsApp message.' });
@@ -1026,7 +1083,7 @@ async function startServer() {
     if (!provider) return res.status(400).json({ error: { message: 'Please add and enable the API provider for this model in Settings → AI APIs.' } });
 
     try {
-      let finalSystemInstruction = String(systemInstruction || '');
+      let finalSystemInstruction = String(systemInstruction || '').trim() || DEFAULT_CHAT_SYSTEM_PROMPT;
       const normalizedMessages = normalizeProviderMessages(messages || []);
       if (isResearchMode) {
         const lastUserMsg = [...normalizedMessages].reverse().find((message: any) => message.role === 'user')?.content;
@@ -1047,7 +1104,8 @@ async function startServer() {
       const upstreamModel = provider.id === 'openrouter' && selected.modelId === 'free' ? 'openrouter/free' : selected.modelId;
       console.log(`[Chat] Calling ${provider.name} for ${upstreamModel} on behalf of ${(req as any).firebaseUser.uid}.`);
       const response = await createProviderCompletion(provider, upstreamModel, normalizedMessages, finalSystemInstruction);
-      const assistantMessage = response?.choices?.[0]?.message;
+      const assistantMessage = response?.choices?.[0]?.message || { role: 'assistant', content: extractCompletionText(response) };
+      assistantMessage.content = extractCompletionText({ choices: [{ message: assistantMessage }] });
       if (assistantMessage) {
         const reasoning = assistantMessage.reasoning_content || assistantMessage.reasoning;
         if (reasoning) assistantMessage.reasoning = reasoning;
@@ -1057,7 +1115,8 @@ async function startServer() {
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
-        const content = String(assistantMessage?.content || '');
+                  const content = extractCompletionText({ choices: [{ message: assistantMessage }] });
+
         res.write(`data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }], provider: provider.id, model: upstreamModel })}\n\n`);
         res.write('data: [DONE]\n\n');
         return res.end();

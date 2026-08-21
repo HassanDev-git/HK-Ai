@@ -1197,6 +1197,7 @@ export default function App() {
 
   // Persistence logic
   const [threads, setThreads] = useState<Thread[]>([]);
+  const threadsRef = useRef<Thread[]>([]);
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(() => {
     const saved = localStorage.getItem('hk_ai_threads');
     if (saved) {
@@ -1263,6 +1264,10 @@ export default function App() {
   const [isSettingsDirty, setIsSettingsDirty] = useState(false);
   const socketRef = useRef<Socket | null>(null);
 
+  useEffect(() => {
+    threadsRef.current = threads;
+  }, [threads]);
+
   const currentThread = threads.find(t => t.id === currentThreadId);
   const messages = currentThread?.messages || [];
 
@@ -1301,7 +1306,20 @@ export default function App() {
           void user.getIdToken().then(token => callback({ token })).catch(() => callback({}));
         }
       });
-      
+
+      socketRef.current.on('connect_error', (error: any) => {
+        console.error('WhatsApp socket connection error:', error);
+        setWAStatus('ERROR');
+        setWAError(error?.message || 'Secure WhatsApp connection failed. Please sign in again or restart the bridge.');
+      });
+
+      socketRef.current.on('disconnect', (reason: string) => {
+        if (reason !== 'io client disconnect') {
+          setWAStatus('ERROR');
+          setWAError('Realtime connection to the WhatsApp bridge was lost. Reconnecting...');
+        }
+      });
+
       socketRef.current.on('whatsapp:pairing_code', ({ code }: any) => {
         setWAPairingCode(String(code));
         setWAPairingError(null);
@@ -1328,8 +1346,11 @@ export default function App() {
         setWAError(status === 'ERROR' ? (error || 'WhatsApp bridge failed to start.') : null);
         if (status === 'CONNECTED') {
           setWAQR(null);
-          setWAChatsLoaded(true);
+          setWAChatsLoaded(false);
           setWAChatsError(null);
+          window.setTimeout(() => {
+            if (socketRef.current?.connected) socketRef.current.emit('whatsapp:get_chats', { userId: user.uid });
+          }, 500);
         }
         if (error) console.error("WhatsApp error:", error);
       });
@@ -1343,17 +1364,19 @@ export default function App() {
         setWAChatsError(null);
       });
 
-      socketRef.current.on('whatsapp:chats_error', () => {
-        // Conversation indexing is optional and is not allowed to mark the
-        // connected AI Bridge as failed.
+      socketRef.current.on('whatsapp:chats_error', ({ error }: any) => {
         setWAChatsLoaded(true);
-        setWAChatsError(null);
+        setWAChatsError(error || 'Unable to load WhatsApp conversations yet. Try Refresh Chats.');
         setWAChats([]);
       });
 
       socketRef.current.on('whatsapp:auto_reply_error', ({ error, rateLimited }: any) => {
         console.error('WhatsApp AI auto-reply error:', error);
         setWAError(rateLimited || /rate.?limit|free-models-per-day|too many requests/i.test(String(error)) ? `Rate limit exceeded. ${error}` : `AI reply error: ${error}`);
+      });
+
+      socketRef.current.on('whatsapp:send_error', ({ error }: any) => {
+        setWAError(`WhatsApp send error: ${error || 'Unable to send message.'}`);
       });
 
       socketRef.current.on('whatsapp:handoff_requested', ({ chatId }: any) => {
@@ -1767,11 +1790,15 @@ export default function App() {
 
     const threadKey = user ? `hk_threads_${user.uid}` : 'hk_ai_threads';
     const saved = localStorage.getItem(threadKey);
-    if (saved) {
-      setThreads(JSON.parse(saved));
-    } else {
-      setThreads([]);
+    let parsed: Thread[] = [];
+    try {
+      const value = saved ? JSON.parse(saved) : [];
+      parsed = Array.isArray(value) ? value : [];
+    } catch {
+      parsed = [];
     }
+    setThreads(parsed);
+    setCurrentThreadId(previous => parsed.some(thread => thread.id === previous) ? previous : (parsed[0]?.id || null));
   }, [user, isAuthLoading]);
 
   // Save threads to LocalStorage
@@ -1964,6 +1991,9 @@ export default function App() {
     };
 
     let targetThreadId = currentThreadId;
+    if (!targetThreadId || !threadsRef.current.some(thread => thread.id === targetThreadId)) {
+      targetThreadId = null;
+    }
     if (!targetThreadId) {
       const threadId = Date.now().toString();
       const newThread: Thread = {
@@ -2027,7 +2057,9 @@ export default function App() {
     try {
       let accumulatedContent = "";
       let accumulatedReasoning = "";
-      const chatContext = messages.concat(userMessage);
+      const liveThread = targetThreadId ? threadsRef.current.find(thread => thread.id === targetThreadId) : null;
+      const priorMessages = liveThread?.messages || messages;
+      const chatContext = [...priorMessages, userMessage];
 
       try {
         const response = await authorizedFetch('/api/chat', {
