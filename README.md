@@ -53,36 +53,3 @@ npm exec -- tsc --noEmit
 ```
 
 The project may still report the existing Vite dynamic-import and bundle-size warnings; these are warnings rather than build failures.
-
-
-## Windows desktop application
-
-The repository includes an Electron desktop wrapper that embeds the Express and Socket.IO backend. Users do not need to start a separate server: the desktop process starts the local backend automatically and opens the React interface in an application window. WhatsApp Web sessions continue through `whatsapp-web.js` while the application is kept in the system tray.
-
-### Build the installer
-
-On a Windows development machine with Node.js 20 or newer, run:
-
-```powershell
-npm install
-$env:CSC_IDENTITY_AUTO_DISCOVERY="false"
-npm run desktop:build
-```
-
-The generated NSIS installer is written to `release\HK-Ai-Setup-1.0.0.exe`. The unpacked application is written to `release\win-unpacked\`. The build uses the supplied HK-Ai logo for the application icon, installer icon, and tray icon.
-
-### Install and use HK-Ai
-
-Double-click `HK-Ai-Setup-1.0.0.exe` and approve the Windows administrator prompt. The installer provides a normal wizard with an installation-location chooser, desktop-shortcut and Start-menu-shortcut options, and a final launch option. After installation, start **HK-Ai** from the selected shortcut, sign in through the configured Firebase Authentication project, and add personal provider keys under **Settings → AI APIs**. Provider keys are saved per user and encrypted by the embedded server; they are not bundled into the installer.
-
-When the window is closed, HK-Ai asks whether to exit completely or keep running in the background. Choosing background mode hides the window in the Windows notification area and keeps WhatsApp connectivity available. Use the tray menu to reopen the window or exit completely. The **Start HK-Ai with Windows** setting is available under **Settings → Account** and can be changed at any time.
-
-### Desktop runtime data and troubleshooting
-
-The desktop process stores its encryption key, encrypted provider configurations, and server logs under `%AppData%\HK-Ai\`. The WhatsApp Web session is stored under `%USERPROFILE%\.hk-ai-whatsapp\`. If the embedded backend does not start, inspect `%AppData%\HK-Ai\logs\server.log`, restart HK-Ai, and confirm that port `3000` is available. WhatsApp may ask for a new QR scan if its local session is removed or invalidated.
-
-The installer is configured as a per-machine installation and therefore requests administrator permission. Builds without an Authenticode certificate may display **Unknown Publisher** in Windows security dialogs; this is expected for an unsigned distribution and does not change the application’s runtime behavior. A trusted publisher warning requires signing the installer and executable with a certificate from a recognized code-signing authority.
-
-## Repository safety
-
-Do not commit `.env` files, API keys, Firebase service-account credentials, generated `release\` output, WhatsApp session data, or server logs. Each user should enter their own provider keys after login. The owner’s AI provider keys are not exposed as a browser fallback.

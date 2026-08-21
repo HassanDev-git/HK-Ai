@@ -1,5 +1,4 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
 import os from "os";
@@ -266,7 +265,7 @@ async function startServer() {
       return next(new Error('Invalid Firebase login session.'));
     }
   });
-  const PORT = 3000;
+  const PORT = Number(process.env.HK_AI_PORT || 3000);
 
   app.use(express.json());
   const modelCatalogCache = new Map<string, { expiresAt: number; models: any[] }>();
@@ -1075,6 +1074,7 @@ async function startServer() {
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true, hmr: false },
       appType: "spa",

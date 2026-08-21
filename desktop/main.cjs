@@ -5,7 +5,9 @@ const fs = require('fs');
 const http = require('http');
 
 const APP_NAME = 'HK-Ai';
+const APP_ID = 'com.hkai.desktop';
 const PORT = Number(process.env.HK_AI_PORT || 3000);
+app.setAppUserModelId(APP_ID);
 const isPackaged = app.isPackaged;
 const projectRoot = isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked') : path.resolve(__dirname, '..');
 const iconPath = path.join(projectRoot, 'desktop-assets', 'HK-Ai.ico');
@@ -22,12 +24,14 @@ function getIcon() {
 }
 
 function getServerCommand() {
-  if (isPackaged) {
-    const tsxCli = path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'tsx', 'dist', 'cli.mjs');
-    return { command: process.execPath, args: [tsxCli, path.join(process.resourcesPath, 'app.asar.unpacked', 'server.ts')] };
+  const serverEntry = isPackaged
+    ? path.join(process.resourcesPath, 'app.asar.unpacked', 'server.cjs')
+    : path.join(projectRoot, 'server.cjs');
+  if (!isPackaged && !fs.existsSync(serverEntry)) {
+    const tsxCli = path.join(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+    return { command: process.execPath, args: [tsxCli, path.join(projectRoot, 'server.ts')] };
   }
-  const tsxCli = path.join(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-  return { command: process.execPath, args: [tsxCli, path.join(projectRoot, 'server.ts')] };
+  return { command: process.execPath, args: [serverEntry] };
 }
 
 function getStableEncryptionKey() {
