@@ -67,6 +67,16 @@ import {
   User as FirebaseUser
 } from 'firebase/auth';
 
+declare global {
+  interface Window {
+    hkAiDesktop?: {
+      isDesktop: boolean;
+      getSettings: () => Promise<{ autoLaunch: boolean }>;
+      setAutoLaunch: (enabled: boolean) => Promise<{ autoLaunch: boolean }>;
+    };
+  }
+}
+
 interface Message {
   id: string;
   role: 'user' | 'assistant';
@@ -1596,6 +1606,7 @@ export default function App() {
     return (localStorage.getItem('hk_ai_theme') as any) || 'light';
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [desktopAutoLaunch, setDesktopAutoLaunch] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'account' | 'ai' | 'apis' | 'data' | 'appearance'>('account');
   const [providerPresets, setProviderPresets] = useState<ProviderConfig[]>([]);
@@ -1848,6 +1859,12 @@ export default function App() {
       setProviderStatus(error?.message || 'Unable to remove provider.');
     }
   };
+
+  useEffect(() => {
+    if (window.hkAiDesktop?.isDesktop) {
+      window.hkAiDesktop.getSettings().then(settings => setDesktopAutoLaunch(Boolean(settings.autoLaunch))).catch(() => undefined);
+    }
+  }, []);
 
   useEffect(() => {
     if (!user) {
@@ -2530,6 +2547,29 @@ export default function App() {
                           </div>
                         </div>
                       </div>
+
+                      {window.hkAiDesktop?.isDesktop && (
+                        <div className="p-4 bg-bg-sidebar rounded-2xl border border-border-subtle">
+                          <div className="flex items-center justify-between gap-4">
+                            <div>
+                              <div className="text-sm font-bold">Start HK-Ai with Windows</div>
+                              <div className="text-[10px] text-text-dim">Launch in the background when your PC starts.</div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const next = !desktopAutoLaunch;
+                                const result = await window.hkAiDesktop?.setAutoLaunch(next);
+                                setDesktopAutoLaunch(Boolean(result?.autoLaunch ?? next));
+                              }}
+                              className={cn("w-12 h-6 rounded-full transition-all relative", desktopAutoLaunch ? "bg-green-500" : "bg-border-strong")}
+                              aria-label="Toggle HK-Ai startup launch"
+                            >
+                              <div className={cn("w-4 h-4 bg-white rounded-full absolute top-1 transition-all", desktopAutoLaunch ? "right-1" : "left-1")} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
                       <div className="p-4 bg-bg-sidebar rounded-2xl border border-border-subtle">
                         <div className="text-xs font-bold text-text-dim uppercase mb-2">Subscription</div>

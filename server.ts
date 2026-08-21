@@ -40,6 +40,8 @@ function resolveWhatsAppBrowserPath() {
   const cacheRoots = [
     path.join(home, '.cache', 'puppeteer', 'chrome'),
     path.join(home, 'AppData', 'Local', 'puppeteer', 'Cache', 'chrome'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'node_modules', 'puppeteer', '.local-chromium'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'node_modules', 'puppeteer-core', '.local-chromium'),
   ];
 
   for (const cacheRoot of cacheRoots) {

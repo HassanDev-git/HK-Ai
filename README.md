@@ -1,152 +1,88 @@
 # HK-Ai
 
-HK-Ai is a React + Vite + Express + Socket.IO AI workspace with Firebase Authentication and an optional `whatsapp-web.js` bridge. The application uses a **login-first** flow: users authenticate with the configured Firebase project, add their own AI provider APIs, and then use chat, models, Web Search, and WhatsApp features.
+HK-Ai is a React + Vite + Express + Socket.IO AI workspace with Firebase Authentication and an optional `whatsapp-web.js` bridge. The published application is **login-first**: visitors must authenticate through the project owner's Firebase Authentication project before they can access chat, model discovery, research, settings, or WhatsApp features.
 
-Each authenticated user receives a personal **AI APIs** panel. The panel supports OpenRouter, OpenAI, Groq, Together AI, Mistral, DeepSeek, Anthropic Claude, Google Gemini, Tavily Web Search, and custom OpenAI-compatible APIs. Provider keys are stored encrypted on the server and are never committed to this repository or returned in full to the browser.
+After signing in, each user has a personal **AI APIs** panel. Users can connect OpenRouter, OpenAI, Groq, Together AI, Mistral, DeepSeek, Anthropic Claude, Google Gemini, or another OpenAI-compatible provider. The server retrieves that user's provider models and uses the selected user's key for chat and WhatsApp replies. Owner-side AI keys are not returned to the browser and are no longer used as a public fallback.
 
-> **Important:** This project requires the Express/Socket.IO server. It is not a static-only website, so GitHub Pages alone cannot run the complete application.
+## Local development
 
-## 1. Download the project
-
-### Using Git
-
-Install [Git](https://git-scm.com/downloads), then run:
-
-```bash
-git clone https://github.com/HassanDev-git/HK-Ai.git
-cd HK-Ai
-```
-
-### Downloading a ZIP
-
-Open the [HK-Ai GitHub repository](https://github.com/HassanDev-git/HK-Ai), select **Code → Download ZIP**, extract the archive, and open a terminal inside the extracted `HK-Ai` folder.
-
-## 2. Requirements
-
-Install **Node.js 20 or newer** from [nodejs.org](https://nodejs.org/). The WhatsApp bridge also requires a Chromium-compatible browser; Puppeteer normally downloads a compatible browser during dependency installation. A Firebase web application is required for login.
-
-## 3. Install dependencies
-
-Run this from the project folder:
+Prerequisites are Node.js 20 or newer and a configured Firebase web application. Install and run the project as follows:
 
 ```bash
 npm install
-```
-
-On Windows, use PowerShell or Command Prompt. If `npm` is not recognized, reinstall Node.js and make sure its installation directory is in `PATH`.
-
-## 4. Configure environment variables
-
-Create a local environment file from the safe template:
-
-### macOS/Linux/Git Bash
-
-```bash
 cp .env.example .env
-```
-
-### Windows PowerShell
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Open `.env` and set a long, random, stable value for `PROVIDER_CONFIG_ENCRYPTION_KEY`. Do not share this value or commit `.env` to GitHub.
-
-| Variable | Required | Purpose |
-|---|---:|---|
-| `PROVIDER_CONFIG_ENCRYPTION_KEY` | Yes | Encrypts user-saved provider API configurations. Keep it stable across restarts. |
-| `PROVIDER_CONFIG_DIR` | Recommended | Private durable directory for encrypted provider files. |
-| `FIREBASE_WEB_API_KEY` | Optional | Overrides the Firebase web API key read from `firebase-applet-config.json`. |
-
-The application does **not** require an owner OpenRouter key for normal user chat. Users add their own provider keys after login. Do not put OpenRouter, OpenAI, Claude, Gemini, Groq, or Tavily keys in the source code.
-
-## 5. Firebase login configuration
-
-The repository contains `firebase-applet-config.json`, which connects the frontend to the configured Firebase web project. Firebase web configuration is client-side configuration; it is not a replacement for AI provider secrets.
-
-In Firebase Console, enable the sign-in methods you want to offer, such as **Email/Password** and **Google**. Add your local and production domains under Firebase Authentication **Authorized domains**. If you are using a different Firebase project, replace `firebase-applet-config.json` with that project's web-app configuration.
-
-## 6. Run the development server
-
-Start HK-Ai with:
-
-```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The server health endpoint is [http://localhost:3000/health](http://localhost:3000/health).
+On Windows PowerShell, copy `.env.example` to `.env` manually if `cp` is unavailable. The development server runs at `http://localhost:3000`.
 
-When the site opens, complete this sequence:
+The repository already contains `firebase-applet-config.json`, which binds the frontend to the owner's Firebase project. Its web configuration is not an AI provider secret. If the repository is being transferred to a different owner, replace that file with the new Firebase web-app configuration and enable the required sign-in methods in Firebase Console.
 
-1. Select **Login / Create account**.
-2. Sign in through the configured Firebase project.
-3. Open **Settings → AI APIs**.
-4. Add at least one AI provider API key and save it.
-5. Refresh or reopen the model selector. The provider's available model catalog will load automatically.
-6. Select a model and start chatting.
+## Required production configuration
 
-## 7. Add AI provider APIs
+Set a stable `PROVIDER_CONFIG_ENCRYPTION_KEY` in the deployment environment. This key encrypts the API keys users save through the AI APIs panel. Do not rotate it casually: changing it makes previously stored provider configurations unreadable unless they are migrated. Set `PROVIDER_CONFIG_DIR` to a private, durable directory or persistent volume in production.
 
-The personal **AI APIs** panel supports the following providers:
+`FIREBASE_WEB_API_KEY` is optional when the server can read the API key from `firebase-applet-config.json`; setting it explicitly is recommended for deployments that do not package that file. `TAVILY_API_KEY` is optional and is only required for shared Deep Research mode. Users still provide their own AI-provider keys from the authenticated panel.
 
-| Provider | Use |
-|---|---|
-| OpenRouter | Access OpenRouter's model catalog and free/paid models. |
-| OpenAI | Use OpenAI models through the OpenAI API. |
-| Groq | Use Groq-hosted models through its OpenAI-compatible API. |
-| Together AI | Use Together-hosted open models. |
-| Mistral | Use Mistral models through its API. |
-| DeepSeek | Use DeepSeek models through its API. |
-| Anthropic Claude | Use Claude's Models and Messages APIs. |
-| Google Gemini | Use Gemini's Generative Language API. |
-| Tavily Web Search | Enable Web Research mode. |
-| Custom OpenAI-compatible | Add an HTTPS provider base URL exposing `/models` and `/chat/completions`. |
+| Variable | Required | Purpose |
+|---|---:|---|
+| `PROVIDER_CONFIG_ENCRYPTION_KEY` | Yes | Encrypts saved user provider configurations. |
+| `PROVIDER_CONFIG_DIR` | Recommended | Durable private storage for encrypted user configuration files. |
+| `FIREBASE_WEB_API_KEY` | Recommended | Server-side validation of Firebase ID tokens. |
+| `TAVILY_API_KEY` | Optional | Shared real-time research/search capability. |
 
-After a provider is saved, the server loads its complete model catalog where the provider exposes pagination or continuation tokens. The main chat selector and WhatsApp model picker use provider-qualified model IDs so models with the same name do not collide.
+Never commit `.env`, provider configuration files, service-account JSON files, or user API keys. The repository includes `.env.example` only.
 
-## 8. Web Search
+## How users operate the app
 
-Web Research requires the user to save a personal **Tavily Web Search** API key under **Settings → AI APIs**. If no Tavily key is configured, the Web Research button opens the API settings panel and displays a setup message. Search results are passed to the selected AI model for synthesis.
+A new visitor sees a login gate and must select **Login / Create account**. After Firebase authentication, the user opens **Settings → AI APIs**, selects a provider, enters their own key, and saves it. The server stores only encrypted provider configuration and returns masked key information. The app then refreshes the provider model catalog automatically. Models are shown with provider-qualified identifiers so identical model names from different providers do not collide.
 
-## 9. WhatsApp Web bridge
+The same provider-qualified model list is used by the main chat model selector and the WhatsApp AI Bridge. WhatsApp remains based on `whatsapp-web.js`; the official WhatsApp Business Cloud API has not been migrated.
 
-The WhatsApp integration uses `whatsapp-web.js`; the official WhatsApp Business Cloud API is not required by this repository. After connecting WhatsApp through the Bridge page, users can select from the models available through their saved provider APIs.
+## Supported provider modes
 
-The bridge stores local WhatsApp authentication data outside the project directory when configured by the local runtime. Do not commit WhatsApp session directories, QR data, or browser caches. If you need to reconnect, use the bridge's disconnect/reset controls rather than deleting random project files while the server is running.
+OpenAI-compatible providers use their `/v1/models` and `/v1/chat/completions` endpoints. Anthropic uses the Claude Models and Messages APIs, while Google Gemini uses its Generative Language Models and `generateContent` endpoints. A custom provider must expose an HTTPS OpenAI-compatible API base URL.
 
-WhatsApp auto-replies use the selected user's provider key. Human handoff detection, conversation memory, reactions, quoted replies, reply queues, and scheduled messages remain available.
+Provider keys are encrypted at rest by this application, but the running server must decrypt them to call the user's selected provider. Deploy the server only on infrastructure you trust, restrict filesystem access to `PROVIDER_CONFIG_DIR`, and use HTTPS in production.
 
-## 10. Build and typecheck
-
-Run the production frontend build:
+## Verification commands
 
 ```bash
 npm run build
-```
-
-Run TypeScript validation:
-
-```bash
 npm exec -- tsc --noEmit
 ```
 
-Existing Vite warnings about Firebase dynamic imports and bundle size do not prevent a successful build.
+The project may still report the existing Vite dynamic-import and bundle-size warnings; these are warnings rather than build failures.
 
-## 11. Production deployment notes
 
-Deploy the Node/Express server on a host that supports long-running processes, WebSockets, filesystem access for encrypted provider configuration, and Puppeteer if WhatsApp is required. Configure a persistent private directory through `PROVIDER_CONFIG_DIR`; do not use ephemeral storage for user provider settings.
+## Windows desktop application
 
-Set the same `PROVIDER_CONFIG_ENCRYPTION_KEY` after every deployment. Rotating it without a migration makes previously saved provider settings unreadable. Use HTTPS in production and restrict access to the provider configuration directory.
+The repository includes an Electron desktop wrapper that embeds the Express and Socket.IO backend. Users do not need to start a separate server: the desktop process starts the local backend automatically and opens the React interface in an application window. WhatsApp Web sessions continue through `whatsapp-web.js` while the application is kept in the system tray.
 
-For a multi-instance deployment, use shared durable storage or replace the local encrypted-file store with a database-backed secret store before scaling horizontally. Every instance must also share the same encryption key.
+### Build the installer
 
-## 12. Security checklist
+On a Windows development machine with Node.js 20 or newer, run:
 
-Never commit `.env`, `.env.local`, API keys, service-account JSON files, encrypted provider directories, WhatsApp authentication directories, or browser caches. The repository's `.gitignore` excludes local environment files, build output, dependencies, and WhatsApp session folders.
+```powershell
+npm install
+$env:CSC_IDENTITY_AUTO_DISCOVERY="false"
+npm run desktop:build
+```
 
-If an API key is ever pasted into a public issue, commit, screenshot, or chat, revoke or rotate it immediately. The application can only protect keys after they are entered into the authenticated server-side API settings flow.
+The generated NSIS installer is written to `release\HK-Ai-Setup-1.0.0.exe`. The unpacked application is written to `release\win-unpacked\`. The build uses the supplied HK-Ai logo for the application icon, installer icon, and tray icon.
 
-## License and support
+### Install and use HK-Ai
 
-This repository contains the HK-Ai application source. Review each provider's terms, pricing, rate limits, and acceptable-use policies before enabling it. Provider usage and billing are controlled by the account associated with the API key.
+Double-click `HK-Ai-Setup-1.0.0.exe` and approve the Windows administrator prompt. The installer provides a normal wizard with an installation-location chooser, desktop-shortcut and Start-menu-shortcut options, and a final launch option. After installation, start **HK-Ai** from the selected shortcut, sign in through the configured Firebase Authentication project, and add personal provider keys under **Settings → AI APIs**. Provider keys are saved per user and encrypted by the embedded server; they are not bundled into the installer.
+
+When the window is closed, HK-Ai asks whether to exit completely or keep running in the background. Choosing background mode hides the window in the Windows notification area and keeps WhatsApp connectivity available. Use the tray menu to reopen the window or exit completely. The **Start HK-Ai with Windows** setting is available under **Settings → Account** and can be changed at any time.
+
+### Desktop runtime data and troubleshooting
+
+The desktop process stores its encryption key, encrypted provider configurations, and server logs under `%AppData%\HK-Ai\`. The WhatsApp Web session is stored under `%USERPROFILE%\.hk-ai-whatsapp\`. If the embedded backend does not start, inspect `%AppData%\HK-Ai\logs\server.log`, restart HK-Ai, and confirm that port `3000` is available. WhatsApp may ask for a new QR scan if its local session is removed or invalidated.
+
+The installer is configured as a per-machine installation and therefore requests administrator permission. Builds without an Authenticode certificate may display **Unknown Publisher** in Windows security dialogs; this is expected for an unsigned distribution and does not change the application’s runtime behavior. A trusted publisher warning requires signing the installer and executable with a certificate from a recognized code-signing authority.
+
+## Repository safety
+
+Do not commit `.env` files, API keys, Firebase service-account credentials, generated `release\` output, WhatsApp session data, or server logs. Each user should enter their own provider keys after login. The owner’s AI provider keys are not exposed as a browser fallback.

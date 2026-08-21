@@ -1,14 +1,21 @@
 {
-  "name": "react-example",
+  "name": "hk-ai",
+  "productName": "HK-Ai",
+  "description": "Secure multi-provider AI workspace with WhatsApp Web integration",
+  "author": "HK-Ai",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "main": "desktop/main.cjs",
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "desktop:dev": "electron .",
+    "desktop:build": "npm run build && electron-builder --win nsis --x64",
+    "desktop:build:dir": "npm run build && electron-builder --win dir --x64"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -20,6 +27,7 @@
     "axios": "^1.15.2",
     "clsx": "^2.1.1",
     "dotenv": "^17.2.3",
+    "esbuild": "^0.28.2",
     "express": "^4.21.2",
     "firebase": "^12.12.1",
     "lucide-react": "^0.546.0",
@@ -32,8 +40,67 @@
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "tailwind-merge": "^3.5.0",
+    "tsx": "^4.23.12",
     "vite": "^6.2.0",
     "whatsapp-web.js": "^1.34.7"
+  },
+  "build": {
+    "appId": "com.hkai.desktop",
+    "productName": "HK-Ai",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "server.ts",
+      "desktop/**/*",
+      "desktop-assets/**/*",
+      "firebase-applet-config.json",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "server.ts",
+      "dist/**/*",
+      "desktop-assets/**/*",
+      "firebase-applet-config.json",
+      "node_modules/**/*"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "desktop-assets"
+    },
+    "extraMetadata": {
+      "name": "hk-ai",
+      "productName": "HK-Ai"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "desktop-assets/HK-Ai.ico",
+      "signAndEditExecutable": false,
+      "artifactName": "HK-Ai-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "shortcutName": "HK-Ai",
+      "deleteAppDataOnUninstall": false,
+      "installerLanguages": [
+        "en_US"
+      ],
+      "installerIcon": "desktop-assets/HK-Ai.ico",
+      "uninstallerIcon": "desktop-assets/HK-Ai.ico",
+      "installerHeader": "desktop-assets/installer-header.bmp",
+      "installerSidebar": "desktop-assets/installer-sidebar.bmp"
+    }
   },
   "devDependencies": {
     "@firebase/eslint-plugin-security-rules": "^0.0.2",
@@ -41,8 +108,9 @@
     "@types/node": "^22.14.0",
     "@vercel/node": "^5.10.1",
     "autoprefixer": "^10.4.21",
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3",
     "tailwindcss": "^4.1.14",
-    "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }

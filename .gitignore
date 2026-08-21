@@ -5,3 +5,9 @@ dist/
 !.env.example
 .wwebjs_auth/
 .wwebjs_cache/
+release/
+installer-*.log
+desktop-run*.log
+dev-server*.log
+test-packaged-app.ps1
+package-for-github.ps1
