@@ -965,26 +965,6 @@ function WhatsAppPage({
                     <p className="text-text-muted font-medium">Please establish a connection to index your recent conversations.</p>
                   </div>
                 </div>
-              ) : chatsError ? (
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="text-center py-32 space-y-6 max-w-xl mx-auto"
-                >
-                  <div className="w-24 h-24 bg-red-50 rounded-full flex items-center justify-center text-red-600 mx-auto border-4 border-red-100 shadow-xl">
-                    <AlertCircle size={40} />
-                  </div>
-                  <div className="space-y-2">
-                    <h3 className="text-2xl font-black">Conversation Index Failed</h3>
-                    <p className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-2xl px-5 py-4 font-medium leading-relaxed">{chatsError}</p>
-                  </div>
-                  <button
-                    onClick={() => onRefreshChats?.()}
-                    className="px-6 py-3 bg-text-main text-bg-primary rounded-2xl text-xs font-black shadow-lg hover:opacity-90 transition-all"
-                  >
-                    Retry Conversation Index
-                  </button>
-                </motion.div>
               ) : !chatsLoaded ? (
                 <div className="text-center py-32 space-y-6">
                   <Loader2 size={48} className="animate-spin text-text-dim mx-auto" />
@@ -1155,6 +1135,19 @@ function WhatsAppPage({
                       )}
                     </motion.div>
                   ))}
+                </div>
+              ) : chatsError ? (
+                <div className="text-center py-24 space-y-5 max-w-xl mx-auto">
+                  <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center text-amber-600 mx-auto border-4 border-amber-100 shadow-xl">
+                    <Info size={32} />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="text-xl font-black">Live index unavailable</h3>
+                    <p className="text-sm text-text-muted bg-amber-50 border border-amber-100 rounded-2xl px-5 py-4 font-medium leading-relaxed">{chatsError} Your saved conversations remain safe; retry when WhatsApp Web is ready.</p>
+                  </div>
+                  <button onClick={() => onRefreshChats?.()} className="px-6 py-3 bg-text-main text-bg-primary rounded-2xl text-xs font-black shadow-lg hover:opacity-90 transition-all">
+                    Retry Conversation Sync
+                  </button>
                 </div>
               ) : (
                 <div className="text-center py-32 space-y-6">

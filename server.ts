@@ -742,39 +742,18 @@ async function startServer() {
 
       const sendCachedChats = () => {
         const cachedChats = listCachedChats(userId);
-        socket.emit('whatsapp:chats', cachedChats);
-        socket.emit('whatsapp:chats_loaded', { count: cachedChats.length, source: 'cache' });
+        emitToUser('whatsapp:chats', cachedChats);
+        emitToUser('whatsapp:chats_loaded', { count: cachedChats.length, source: 'cache' });
         return cachedChats;
       };
 
-      const sendChats = async (attempt = 1): Promise<void> => {
-        try {
-          // WhatsApp Web can report ready before its chat store is queryable.
-          if (typeof client.getChats !== 'function') {
-            sendCachedChats();
-            return;
-          }
-          if (attempt > 1) await new Promise(resolve => setTimeout(resolve, 2500));
-          const chats = await client.getChats();
-          const simplifiedChats = chats.slice(0, 50).map((c: any) => ({
-            id: c.id._serialized,
-            name: c.name || c.formattedTitle || 'Unknown chat',
-            unreadCount: c.unreadCount || 0,
-            timestamp: c.timestamp || 0
-          }));
-          socket.emit('whatsapp:chats', simplifiedChats);
-          socket.emit('whatsapp:chats_loaded', { count: simplifiedChats.length });
-          console.log(`[WhatsApp] Loaded ${simplifiedChats.length} chats for ${userId}`);
-        } catch (error: any) {
-          if (attempt < 3) {
-            console.warn(`[WhatsApp] Chat indexing attempt ${attempt} failed for ${userId}; retrying...`);
-            return sendChats(attempt + 1);
-          }
-          const message = error?.message || 'Unable to load WhatsApp conversations.';
-          console.error(`[WhatsApp] Chat indexing error for ${userId}:`, error);
-          const cachedChats = sendCachedChats();
-          socket.emit('whatsapp:chats_error', { error: cachedChats.length ? `${message} Showing saved conversations.` : `${message} Try Restart WhatsApp Bridge.` });
-        }
+      const sendChats = async (): Promise<void> => {
+        // Cache-first is intentional. WhatsApp Web can expose a client while
+        // its internal getChats store is undefined or still loading. Inbound
+        // events populate this cache in realtime, so this path never turns a
+        // temporary Web-store limitation into a fatal Conversation Index error.
+        const cachedChats = sendCachedChats();
+        console.log(`[WhatsApp] Sent ${cachedChats.length} cached conversations for ${userId}; live events will extend the list.`);
       };
 
       client.on('ready', async () => {
