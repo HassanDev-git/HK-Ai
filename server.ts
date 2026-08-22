@@ -72,11 +72,20 @@ const DEFAULT_WHATSAPP_SYSTEM_PROMPT = `You are HK-Ai WhatsApp, a reliable perso
 const extractCompletionText = (completion: any) => {
   const message = completion?.choices?.[0]?.message || completion?.message || {};
   const content = message?.content ?? completion?.choices?.[0]?.text ?? completion?.output_text ?? '';
-  if (Array.isArray(content)) {
-    return content.map((part: any) => typeof part === 'string' ? part : (part?.text ?? part?.content ?? '')).join('');
-  }
-  if (typeof content === 'string') return content;
-  return content == null ? '' : String(content);
+  return contentToText(content);
+};
+
+const extractReasoningText = (completion: any) => {
+  const message = completion?.choices?.[0]?.message || completion?.message || {};
+  const reasoning = message?.reasoning_content ?? message?.reasoning ?? message?.thinking ?? message?.reasoning_details ?? completion?.reasoning ?? '';
+  if (Array.isArray(reasoning)) return reasoning.map((part: any) => typeof part === 'string' ? part : (part?.text ?? part?.content ?? part?.reasoning ?? '')).join('');
+  return contentToText(reasoning);
+};
+
+const splitThinkingMarkup = (text: string) => {
+  const match = text.match(/<think(?:ing)?>([\s\S]*?)<\/(?:think|thinking)>/i);
+  if (!match) return { answer: text.trim(), reasoning: '' };
+  return { answer: text.replace(match[0], '').trim(), reasoning: match[1].trim() };
 };
 const OPENROUTER_API_KEY = (process.env.OPENROUTER_API_KEY || "").trim();
 const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || "").trim();
@@ -226,6 +235,18 @@ async function fetchProviderModels(provider: UserProvider) {
   return collected.map((model: any) => normalizeListedModel(provider, model)).filter(Boolean);
 }
 
+const withTimeout = async (operation: () => Promise<any>, fallback: any = null, timeoutMs = 3500) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(operation).catch(() => fallback),
+      new Promise(resolve => { timer = setTimeout(() => resolve(fallback), timeoutMs); })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
 const contentToText = (content: any): string => {
   if (Array.isArray(content)) {
     return content.map((part: any) => typeof part === 'string' ? part : (part?.text ?? part?.content ?? '')).join('');
@@ -242,21 +263,38 @@ async function createProviderCompletion(provider: UserProvider, modelId: string,
   const normalized = normalizeProviderMessages(messages);
   if (provider.kind === 'openai-compatible') {
     const client = new OpenAI({ baseURL: provider.baseUrl, apiKey: provider.apiKey });
-    return client.chat.completions.create({ model: modelId, messages: systemInstruction ? [{ role: 'system', content: systemInstruction }, ...normalized] as any : normalized as any, stream: false }) as any;
+    const request: any = {
+      model: modelId,
+      messages: systemInstruction ? [{ role: 'system', content: systemInstruction }, ...normalized] : normalized,
+      stream: false
+    };
+    // OpenRouter exposes provider reasoning in `reasoning_content`. Request it
+    // for models that support it; unsupported models simply return normal text.
+    if (provider.id === 'openrouter') request.reasoning = { effort: 'medium', exclude: false };
+    return client.chat.completions.create(request) as any;
   }
   if (provider.kind === 'anthropic') {
     const system = systemInstruction || undefined;
     const response = await axios.post(`${provider.baseUrl || 'https://api.anthropic.com/v1'}/messages`, {
       model: modelId,
       max_tokens: 4096,
+      ...(String(modelId).toLowerCase().includes('claude') ? { thinking: { type: 'enabled', budget_tokens: 2048 } } : {}),
       system,
       messages: normalized.filter(message => message.role !== 'system').map(message => ({ role: message.role === 'assistant' ? 'assistant' : 'user', content: message.content }))
     }, { headers: providerHeaders(provider), timeout: 120000 });
-    return { choices: [{ message: { role: 'assistant', content: (response.data?.content || []).map((part: any) => part.text || '').join(''), reasoning: '' } }], usage: response.data?.usage };
+    const blocks = Array.isArray(response.data?.content) ? response.data.content : [];
+    const answer = blocks.filter((part: any) => part?.type === 'text' || !part?.type).map((part: any) => part.text || '').join('');
+    const reasoning = blocks.filter((part: any) => part?.type === 'thinking').map((part: any) => part.thinking || part.text || '').join('');
+    return { choices: [{ message: { role: 'assistant', content: answer, reasoning } }], usage: response.data?.usage };
   }
   const contents = normalized.filter(message => message.role !== 'system').map(message => ({ role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content }] }));
-  const response = await axios.post(`${provider.baseUrl || 'https://generativelanguage.googleapis.com/v1beta'}/models/${encodeURIComponent(modelId)}:generateContent`, { systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined, contents }, { params: { key: provider.apiKey }, timeout: 120000 });
-  return { choices: [{ message: { role: 'assistant', content: response.data?.candidates?.[0]?.content?.parts?.map((part: any) => part.text || '').join('') || '', reasoning: '' } }], usage: response.data?.usageMetadata };
+  const googleRequest: any = { systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined, contents };
+  if (/gemini-(2\.5|3)/i.test(modelId)) {
+    googleRequest.generationConfig = { thinkingConfig: { includeThoughts: true, thinkingBudget: 2048 } };
+  }
+  const response = await axios.post(`${provider.baseUrl || 'https://generativelanguage.googleapis.com/v1beta'}/models/${encodeURIComponent(modelId)}:generateContent`, googleRequest, { params: { key: provider.apiKey }, timeout: 120000 });
+  const googleParts = response.data?.candidates?.[0]?.content?.parts || [];
+  return { choices: [{ message: { role: 'assistant', content: googleParts.filter((part: any) => !part.thought).map((part: any) => part.text || '').join('') || '', reasoning: googleParts.filter((part: any) => part.thought).map((part: any) => part.text || '').join('') } }], usage: response.data?.usageMetadata };
 }
 
 const openai = OPENROUTER_API_KEY ? new OpenAI({
@@ -559,6 +597,7 @@ async function startServer() {
     socket.on("whatsapp:init", async ({ settings, pairingPhoneNumber }) => {
       const userId = socket.data.firebaseUser.uid;
       socket.join(userId);
+      const emitToUser = (event: string, payload?: any) => io.to(userId).emit(event, payload);
       console.log(`[WhatsApp] Init requested for user: ${userId}`);
       loadPersistedMemory(userId);
       hydrateCachedChats(userId);
@@ -655,10 +694,9 @@ async function startServer() {
 
         let chat: any = null;
         let contact: any = null;
-        try { chat = await msg.getChat(); } catch (error) {
-          console.warn(`[WhatsApp] Chat metadata unavailable for ${messageId}; using message identifiers.`);
-        }
-        try { contact = await msg.getContact(); } catch {}
+        chat = await withTimeout(() => msg.getChat(), null, 3500);
+        if (!chat) console.warn(`[WhatsApp] Chat metadata unavailable for ${messageId}; using message identifiers.`);
+        contact = await withTimeout(() => msg.getContact(), null, 3500);
 
         const chatId = chat?.id?._serialized || msg.from || msg.to || 'unknown-chat';
         const chatName = chat?.name || chat?.formattedTitle || contact?.pushname || contact?.name || msg.from || 'WhatsApp chat';
@@ -691,17 +729,17 @@ async function startServer() {
         messageCache.set(chatId, [...cachedMessages, message].slice(-100));
         persistMemory(userId);
 
-        socket.emit('whatsapp:chats', listCachedChats(userId));
-        socket.emit('whatsapp:chats_loaded', { count: listCachedChats(userId).length, source: 'live' });
-        socket.emit('whatsapp:message', { chatId, message });
+        emitToUser('whatsapp:chats', listCachedChats(userId));
+        emitToUser('whatsapp:chats_loaded', { count: listCachedChats(userId).length, source: 'live' });
+        emitToUser('whatsapp:message', { chatId, message });
       };
 
       client.on('qr', (qr: string) => {
         console.log(`[WhatsApp] QR generated for ${userId}`);
         qrcode.toDataURL(qr, (err: any, url: string) => {
-          socket.emit('whatsapp:qr', url);
+          emitToUser('whatsapp:qr', url);
         });
-        socket.emit('whatsapp:status', { status: 'DISCONNECTED' });
+        emitToUser('whatsapp:status', { status: 'DISCONNECTED' });
       });
 
       const sendCachedChats = () => {
@@ -747,7 +785,7 @@ async function startServer() {
         const watchdog = whatsappReadyWatchdogs.get(userId);
         if (watchdog) clearTimeout(watchdog);
         whatsappReadyWatchdogs.delete(userId);
-        socket.emit('whatsapp:status', { status: 'CONNECTED' });
+        emitToUser('whatsapp:status', { status: 'CONNECTED' });
         // Index chats only after ready, and safely fall back to saved chats if
         // a newer WhatsApp Web build exposes an unavailable chat store.
         await sendChats();
@@ -755,7 +793,7 @@ async function startServer() {
 
       client.on('authenticated', () => {
         console.log(`[WhatsApp] ${userId} Authenticated; waiting for WhatsApp Web ready state.`);
-        socket.emit('whatsapp:status', { status: 'AUTHENTICATED' });
+        emitToUser('whatsapp:status', { status: 'AUTHENTICATED' });
         const previousWatchdog = whatsappReadyWatchdogs.get(userId);
         if (previousWatchdog) clearTimeout(previousWatchdog);
         const watchdog = setTimeout(async () => {
@@ -765,7 +803,7 @@ async function startServer() {
           if (state === 'CONNECTED') {
             console.warn(`[WhatsApp] Ready event was delayed for ${userId}; promoting authenticated connected client.`);
             client._initializing = false;
-            socket.emit('whatsapp:status', { status: 'CONNECTED' });
+            emitToUser('whatsapp:status', { status: 'CONNECTED' });
             await sendChats();
           } else {
             console.warn(`[WhatsApp] Authenticated session for ${userId} is still not ready (state: ${state || 'unknown'}).`);
@@ -784,7 +822,7 @@ async function startServer() {
         const watchdog = whatsappReadyWatchdogs.get(userId);
         if (watchdog) clearTimeout(watchdog);
         whatsappReadyWatchdogs.delete(userId);
-        socket.emit('whatsapp:status', { status: 'ERROR', error: msg });
+        emitToUser('whatsapp:status', { status: 'ERROR', error: msg });
         whatsappClients.delete(userId);
       });
 
@@ -794,7 +832,7 @@ async function startServer() {
         const watchdog = whatsappReadyWatchdogs.get(userId);
         if (watchdog) clearTimeout(watchdog);
         whatsappReadyWatchdogs.delete(userId);
-        socket.emit('whatsapp:status', { status: 'DISCONNECTED' });
+        emitToUser('whatsapp:status', { status: 'DISCONNECTED' });
         whatsappClients.delete(userId);
       });
 
@@ -815,21 +853,15 @@ async function startServer() {
         if (!(settings.autoReply ?? true) || msg.fromMe || !String(msg.body || '').trim()) return;
 
         try {
-          let chat: any = null;
-          try {
-            chat = await msg.getChat();
-            if (chat?.isGroup) return;
-          } catch {
-            // New WhatsApp Web builds may reject getChat(); direct-send still works.
-            if (String(msg.from || '').endsWith('@g.us')) return;
-          }
+          const chat: any = await withTimeout(() => msg.getChat(), null, 3500);
+          if (chat?.isGroup || (!chat && String(msg.from || '').endsWith('@g.us'))) return;
 
           const chatId = String(msg.from || msg.to || 'unknown-chat');
           const currentText = String(msg.body || '').trim();
           const handoffRequested = HANDOFF_PATTERNS.test(currentText);
           const intent = /\b(price|buy|purchase|cost|rate|order)\b/i.test(currentText) ? 'sales' : handoffRequested ? 'handoff' : /\b(help|problem|issue|error|not working|complaint)\b/i.test(currentText) ? 'support' : /\?|\b(what|why|how|when|where|who)\b/i.test(currentText) ? 'question' : 'general';
           if (handoffRequested) {
-            socket.emit('whatsapp:handoff_requested', { chatId, messageId, text: currentText, intent });
+            emitToUser('whatsapp:handoff_requested', { chatId, messageId, text: currentText, intent });
             console.warn(`[WhatsApp] Human handoff requested by ${msg.from}.`);
           }
           const previousHistory = getCachedHistory(userId, chatId, 20)
@@ -850,7 +882,7 @@ async function startServer() {
             const emoji = String(settings.reactionEmoji || '👍').trim() || '👍';
             try {
               await msg.react(emoji);
-              socket.emit('whatsapp:reaction', { chatId, messageId, emoji });
+              emitToUser('whatsapp:reaction', { chatId, messageId, emoji });
             } catch (reactionError: any) {
               console.warn(`[WhatsApp] Reaction failed for ${msg.from}:`, reactionError?.message || reactionError);
             }
@@ -862,7 +894,7 @@ async function startServer() {
           const upstreamModel = userProvider.id === 'openrouter' && parsedModel.modelId === 'free' ? 'openrouter/free' : parsedModel.modelId;
           console.log(`[WhatsApp] Generating contextual auto-reply for ${msg.from} using ${userProvider.name}/${upstreamModel} with ${conversationHistory.length} messages.`);
           const completion = await createProviderCompletion(userProvider, upstreamModel, conversationHistory, `${systemPrompt}${personaContext}\nCurrent intent classification: ${intent}. If intent is handoff, acknowledge the request and say that a human will take over; do not pretend to be human.`);
-          const responseText = extractCompletionText(completion).trim();
+          const responseText = splitThinkingMarkup(extractCompletionText(completion)).answer;
 
           if (responseText) {
             console.log(`[WhatsApp] Auto-replying to ${msg.from}: ${responseText.substring(0, 60)}...`);
@@ -890,7 +922,7 @@ async function startServer() {
           recordProviderFailure(userId, activeProviderId, error);
           const message = activeProviderId !== 'unknown' ? friendlyProviderError(activeProviderId, error) : (error?.message || 'AI auto-reply failed.');
           console.error(`[WhatsApp] Auto-reply error for ${msg.from}:`, message);
-          socket.emit('whatsapp:auto_reply_error', { error: message, rateLimited: /rate.?limit|free-models-per-day|too many requests/i.test(message) });
+          emitToUser('whatsapp:auto_reply_error', { error: message, rateLimited: /rate.?limit|free-models-per-day|too many requests/i.test(message) });
         }
       };
 
@@ -1142,9 +1174,10 @@ async function startServer() {
       console.log(`[Chat] Calling ${provider.name} for ${upstreamModel} on behalf of ${(req as any).firebaseUser.uid}.`);
       const response = await createProviderCompletion(provider, upstreamModel, normalizedMessages, finalSystemInstruction);
       const assistantMessage = response?.choices?.[0]?.message || { role: 'assistant', content: extractCompletionText(response) };
-      assistantMessage.content = extractCompletionText({ choices: [{ message: assistantMessage }] });
+      const split = splitThinkingMarkup(extractCompletionText({ choices: [{ message: assistantMessage }] }));
+      assistantMessage.content = split.answer;
       if (assistantMessage) {
-        const reasoning = assistantMessage.reasoning_content || assistantMessage.reasoning;
+        const reasoning = extractReasoningText({ choices: [{ message: assistantMessage }] }) || split.reasoning;
         if (reasoning) assistantMessage.reasoning = reasoning;
       }
 
@@ -1152,9 +1185,10 @@ async function startServer() {
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
-                  const content = extractCompletionText({ choices: [{ message: assistantMessage }] });
+                          const content = extractCompletionText({ choices: [{ message: assistantMessage }] });
+        const reasoning = extractReasoningText({ choices: [{ message: assistantMessage }] });
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { content, reasoning }, finish_reason: 'stop' }], provider: provider.id, model: upstreamModel })}\n\n`);
 
-        res.write(`data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }], provider: provider.id, model: upstreamModel })}\n\n`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }

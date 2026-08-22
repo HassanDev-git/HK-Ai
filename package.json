@@ -4,7 +4,7 @@
   "description": "Secure multi-provider AI workspace with WhatsApp Web integration",
   "author": "HK-Ai",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "module",
   "main": "desktop/main.cjs",
   "scripts": {

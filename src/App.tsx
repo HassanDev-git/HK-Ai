@@ -2119,6 +2119,7 @@ export default function App() {
               if (delta?.content) accumulatedContent += delta.content;
               if (delta?.reasoning_content || delta?.reasoning) {
                 accumulatedReasoning += (delta.reasoning_content || delta.reasoning);
+                setExpandedReasoning(prev => ({ ...prev, [assistantId]: true }));
               }
 
               // Update state for visual typing effect
@@ -3539,7 +3540,7 @@ export default function App() {
                           </div>
                         ) : message.content ? (
                           <div className="space-y-4">
-                            {message.reasoning && (
+                            {(message.reasoning || message.isTyping) && (
                               <div className="bg-[#f8f8f7] border border-[#e8e8e6] rounded-2xl overflow-hidden mb-6 shadow-sm">
                                 <button 
                                   onClick={() => setExpandedReasoning(prev => ({ ...prev, [message.id]: !prev[message.id] }))}
@@ -3549,10 +3550,10 @@ export default function App() {
                                     <div className="w-6 h-6 rounded-lg bg-white border border-[#e8e8e6] flex items-center justify-center shadow-sm group-hover/reason:scale-110 transition-transform">
                                       <Zap size={14} className="text-amber-500" />
                                     </div>
-                                    <span className="text-[11px] font-bold uppercase tracking-[0.1em]">HK-Ai Reasoning Chain</span>
+                                    <span className="text-[11px] font-bold uppercase tracking-[0.1em]">{message.reasoning ? 'HK-Ai Reasoning Chain' : 'HK-Ai Thinking'}</span>
                                   </div>
                                   <div className="flex items-center gap-2">
-                                    <span className="text-[10px] font-medium opacity-60 uppercase">{expandedReasoning[message.id] ? 'Hide' : 'Show Details'}</span>
+                                    <span className="text-[10px] font-medium opacity-60 uppercase">{message.reasoning ? (expandedReasoning[message.id] ? 'Hide' : 'Show Details') : 'Working...'}</span>
                                     <ChevronDown size={14} className={cn("transition-transform duration-300", expandedReasoning[message.id] && "rotate-180")} />
                                   </div>
                                 </button>
@@ -3566,7 +3567,7 @@ export default function App() {
                                       className="px-5 pb-5"
                                     >
                                       <div className="text-[13px] text-[#4a4a48] leading-relaxed font-normal border-t border-[#e8e8e6] pt-4 whitespace-pre-wrap selection:bg-amber-100">
-                                        {message.reasoning}
+                                        {message.reasoning || 'Working through your request and checking the conversation context...'}
                                       </div>
                                     </motion.div>
                                   )}
@@ -3711,6 +3712,17 @@ export default function App() {
                           </div>
                         ) : message.role === 'assistant' && (
                           <div className="space-y-3 py-4">
+                            {message.isTyping && (
+                              <div className="flex items-center gap-3 rounded-2xl border border-[#e8e8e6] bg-[#f8f8f7] px-5 py-4 text-[#6f6f6a]">
+                                <Zap size={16} className="text-amber-500 animate-pulse" />
+                                <span className="text-[11px] font-bold uppercase tracking-[0.12em]">Thinking through your request...</span>
+                                <span className="flex items-center gap-1 ml-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce [animation-delay:-0.3s]" />
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce [animation-delay:-0.15s]" />
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce" />
+                                </span>
+                              </div>
+                            )}
                             {message.type === 'search' && (
                               <motion.div 
                                 initial={{ opacity: 0, x: -10 }}
