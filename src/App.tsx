@@ -1235,7 +1235,7 @@ export default function App() {
   const [isWAOpen, setIsWAOpen] = useState(false);
   const [waStatus, setWAStatus] = useState<'DISCONNECTED' | 'CONNECTING' | 'AUTHENTICATED' | 'CONNECTED' | 'ERROR'>('DISCONNECTED');
   const [waError, setWAError] = useState<string | null>(null);
-  const waInitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const waInitTimerRef = useRef<ReturnType<typeof setTimeout> | number | null>(null);
   const [waQR, setWAQR] = useState<string | null>(null);
   const [waPairingCode, setWAPairingCode] = useState<string | null>(null);
   const [waPairingError, setWAPairingError] = useState<string | null>(null);
@@ -1338,9 +1338,15 @@ export default function App() {
       });
 
       socketRef.current.on('whatsapp:status', ({ status, error }: any) => {
-        if (status === 'CONNECTED' || status === 'ERROR') {
+        if (status === 'CONNECTED' || status === 'ERROR' || status === 'DISCONNECTED') {
           if (waInitTimerRef.current) clearTimeout(waInitTimerRef.current);
           waInitTimerRef.current = null;
+        } else if (status === 'AUTHENTICATED') {
+          if (waInitTimerRef.current) clearTimeout(waInitTimerRef.current);
+          waInitTimerRef.current = window.setTimeout(() => {
+            setWAStatus('ERROR');
+            setWAError('WhatsApp logged in, but the Web client is still loading. Click Restart Bridge once; your linked session will be reused.');
+          }, 120000);
         }
         setWAStatus(status);
         setWAError(status === 'ERROR' ? (error || 'WhatsApp bridge failed to start.') : null);
@@ -1464,10 +1470,10 @@ export default function App() {
     setWAChats([]);
     setWAQR(null);
     socketRef.current.emit('whatsapp:init', { userId: user.uid, settings: waSettings });
-    waInitTimerRef.current = setTimeout(() => {
+    waInitTimerRef.current = window.setTimeout(() => {
       setWAStatus('ERROR');
-      setWAError('The WhatsApp bridge timed out before returning a QR code. Click Restart Bridge and try again.');
-    }, 30000);
+      setWAError('WhatsApp Web did not respond within 120 seconds. Click Restart Bridge and try again; the existing linked session will be reused.');
+    }, 120000);
   };
 
   const pairWhatsAppWithPhone = (phoneNumber: string) => {
@@ -1494,8 +1500,8 @@ export default function App() {
       setWAPairingCode(null);
       setWAQR(null);
       socketRef.current.emit('whatsapp:reset', { userId: user.uid });
-      // Small delay before re-init to allow server cleanup
-      setTimeout(initWhatsApp, 1000);
+      // Allow the old Puppeteer client to release its profile lock before re-init.
+      window.setTimeout(initWhatsApp, 2500);
     }
   };
 

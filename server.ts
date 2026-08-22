@@ -424,6 +424,7 @@ async function startServer() {
   const whatsappMessageCache = new Map<string, Map<string, any[]>>();
   const whatsappPairingCodes = new Map<string, { code: string; phoneNumber: string; createdAt: number }>();
   const whatsappPairingInFlight = new Set<string>();
+  const whatsappReadyWatchdogs = new Map<string, ReturnType<typeof setTimeout>>();
   const whatsappMemoryDir = path.join(os.homedir(), '.hk-ai-whatsapp-memory');
   fs.mkdirSync(whatsappMemoryDir, { recursive: true });
   const HANDOFF_PATTERNS = /\b(human|agent|real person|call me|complaint|complain|manager|owner|urgent|emergency)\b/i;
@@ -703,9 +704,20 @@ async function startServer() {
         socket.emit('whatsapp:status', { status: 'DISCONNECTED' });
       });
 
+      const sendCachedChats = () => {
+        const cachedChats = listCachedChats(userId);
+        socket.emit('whatsapp:chats', cachedChats);
+        socket.emit('whatsapp:chats_loaded', { count: cachedChats.length, source: 'cache' });
+        return cachedChats;
+      };
+
       const sendChats = async (attempt = 1): Promise<void> => {
         try {
           // WhatsApp Web can report ready before its chat store is queryable.
+          if (typeof client.getChats !== 'function') {
+            sendCachedChats();
+            return;
+          }
           if (attempt > 1) await new Promise(resolve => setTimeout(resolve, 2500));
           const chats = await client.getChats();
           const simplifiedChats = chats.slice(0, 50).map((c: any) => ({
@@ -724,23 +736,42 @@ async function startServer() {
           }
           const message = error?.message || 'Unable to load WhatsApp conversations.';
           console.error(`[WhatsApp] Chat indexing error for ${userId}:`, error);
-          socket.emit('whatsapp:chats', []);
-          socket.emit('whatsapp:chats_error', { error: `${message} Try Restart WhatsApp Bridge.` });
+          const cachedChats = sendCachedChats();
+          socket.emit('whatsapp:chats_error', { error: cachedChats.length ? `${message} Showing saved conversations.` : `${message} Try Restart WhatsApp Bridge.` });
         }
       };
 
       client.on('ready', async () => {
         console.log(`[WhatsApp] Client ${userId} is ready!`);
         client._initializing = false;
+        const watchdog = whatsappReadyWatchdogs.get(userId);
+        if (watchdog) clearTimeout(watchdog);
+        whatsappReadyWatchdogs.delete(userId);
         socket.emit('whatsapp:status', { status: 'CONNECTED' });
-        // Chat indexing is deliberately manual. Calling getChats immediately
-        // after ready can crash on newer WhatsApp Web builds.
-        socket.emit('whatsapp:chats_loaded', { count: 0 });
+        // Index chats only after ready, and safely fall back to saved chats if
+        // a newer WhatsApp Web build exposes an unavailable chat store.
+        await sendChats();
       });
 
       client.on('authenticated', () => {
-        console.log(`[WhatsApp] ${userId} Authenticated`);
+        console.log(`[WhatsApp] ${userId} Authenticated; waiting for WhatsApp Web ready state.`);
         socket.emit('whatsapp:status', { status: 'AUTHENTICATED' });
+        const previousWatchdog = whatsappReadyWatchdogs.get(userId);
+        if (previousWatchdog) clearTimeout(previousWatchdog);
+        const watchdog = setTimeout(async () => {
+          whatsappReadyWatchdogs.delete(userId);
+          if (!whatsappClients.has(userId) || whatsappClients.get(userId) !== client || !client._initializing) return;
+          const state = await client.getState().catch(() => null);
+          if (state === 'CONNECTED') {
+            console.warn(`[WhatsApp] Ready event was delayed for ${userId}; promoting authenticated connected client.`);
+            client._initializing = false;
+            socket.emit('whatsapp:status', { status: 'CONNECTED' });
+            await sendChats();
+          } else {
+            console.warn(`[WhatsApp] Authenticated session for ${userId} is still not ready (state: ${state || 'unknown'}).`);
+          }
+        }, 45000);
+        whatsappReadyWatchdogs.set(userId, watchdog);
       });
 
       // UI updates for everything
@@ -750,6 +781,9 @@ async function startServer() {
       client.on('auth_failure', (msg: string) => {
         console.error(`[WhatsApp] ${userId} auth failure:`, msg);
         client._initializing = false;
+        const watchdog = whatsappReadyWatchdogs.get(userId);
+        if (watchdog) clearTimeout(watchdog);
+        whatsappReadyWatchdogs.delete(userId);
         socket.emit('whatsapp:status', { status: 'ERROR', error: msg });
         whatsappClients.delete(userId);
       });
@@ -757,6 +791,9 @@ async function startServer() {
       client.on('disconnected', (reason: string) => {
         console.log(`[WhatsApp] ${userId} disconnected:`, reason);
         client._initializing = false;
+        const watchdog = whatsappReadyWatchdogs.get(userId);
+        if (watchdog) clearTimeout(watchdog);
+        whatsappReadyWatchdogs.delete(userId);
         socket.emit('whatsapp:status', { status: 'DISCONNECTED' });
         whatsappClients.delete(userId);
       });

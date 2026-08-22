@@ -4,7 +4,7 @@
   "description": "Secure multi-provider AI workspace with WhatsApp Web integration",
   "author": "HK-Ai",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "module",
   "main": "desktop/main.cjs",
   "scripts": {
@@ -77,7 +77,6 @@
         "en_US"
       ],
       "installerIcon": "desktop-assets/HK-Ai.ico",
-      "uninstallerIcon": "desktop-assets/HK-Ai.ico",
       "installerHeader": "desktop-assets/installer-header.bmp",
       "installerSidebar": "desktop-assets/installer-sidebar.bmp",
       "include": "desktop/installer.nsh"
