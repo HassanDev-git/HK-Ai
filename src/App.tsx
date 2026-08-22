@@ -1402,7 +1402,20 @@ export default function App() {
       });
       
       socketRef.current.on('whatsapp:messages', ({ chatId, messages }: any) => {
-        setWAMessages(prev => ({ ...prev, [chatId]: messages }));
+        setWAMessages(prev => {
+          const existing = prev[chatId] || [];
+          const merged = [...existing, ...(Array.isArray(messages) ? messages : [])];
+          const seen = new Set<string>();
+          return {
+            ...prev,
+            [chatId]: merged.filter((message: any) => {
+              const id = String(message?.id || `${message?.timestamp || 0}:${message?.body || ''}`);
+              if (seen.has(id)) return false;
+              seen.add(id);
+              return true;
+            }).slice(-100)
+          };
+        });
       });
       
       socketRef.current.on('whatsapp:reaction', ({ chatId, messageId, emoji }: any) => {
@@ -1416,7 +1429,7 @@ export default function App() {
         setWAMessages(prev => {
           const chatMsgs = prev[chatId] || [];
           if (chatMsgs.find(m => m.id === message.id)) return prev;
-          return { ...prev, [chatId]: [...chatMsgs, message] };
+          return { ...prev, [chatId]: [...chatMsgs, message].slice(-100) };
         });
         
         setWAChats(prev => {

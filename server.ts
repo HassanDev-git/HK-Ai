@@ -692,14 +692,12 @@ async function startServer() {
         emittedMessages.add(messageId);
         if (emittedMessages.size > 1000) emittedMessages.delete(emittedMessages.values().next().value);
 
-        let chat: any = null;
-        let contact: any = null;
-        chat = await withTimeout(() => msg.getChat(), null, 3500);
-        if (!chat) console.warn(`[WhatsApp] Chat metadata unavailable for ${messageId}; using message identifiers.`);
-        contact = await withTimeout(() => msg.getContact(), null, 3500);
-
-        const chatId = chat?.id?._serialized || msg.from || msg.to || 'unknown-chat';
-        const chatName = chat?.name || chat?.formattedTitle || contact?.pushname || contact?.name || msg.from || 'WhatsApp chat';
+        // Do not wait for WhatsApp Web's chat/contact store here. New Web builds
+        // can keep getChat() pending while message events are already available.
+        // The message is therefore synchronized immediately using stable JIDs.
+        const chatId = String(msg.from || msg.to || 'unknown-chat');
+        const contactName = msg?._data?.notifyName || msg?._data?.pushname || msg?._data?.name || '';
+        const chatName = contactName || chatId || 'WhatsApp chat';
         const message = {
           id: messageId,
           body: msg.body || '',
@@ -709,7 +707,7 @@ async function startServer() {
           fromMe: Boolean(msg.fromMe),
           hasMedia: Boolean(msg.hasMedia),
           type: msg.type,
-          senderName: contact?.pushname || contact?.name || msg.from || 'Unknown',
+          senderName: contactName || msg.from || 'Unknown',
           chatName
         };
 
@@ -813,8 +811,19 @@ async function startServer() {
       });
 
       // UI updates for everything
-      client.on('message', emitMessage);
-      client.on('message_create', emitMessage);
+      const handleInboundMessage = (msg: any, source: string) => {
+        const inboundId = msg?.id?._serialized || `${msg?.from || msg?.to || 'unknown'}:${msg?.timestamp || Date.now()}`;
+        console.log(`[WhatsApp] Inbound ${source} event for ${userId}: ${inboundId} from ${msg?.from || 'unknown'} (${String(msg?.body || '').slice(0, 80)})`);
+        emitToUser('whatsapp:bridge_event', { type: 'message', source, messageId: inboundId });
+        void emitMessage(msg).catch((error: any) => {
+          console.error(`[WhatsApp] Realtime message processing failed for ${inboundId}:`, error?.message || error);
+          emitToUser('whatsapp:auto_reply_error', { error: 'Incoming WhatsApp message could not be synchronized. Please refresh the chat.' });
+        });
+        handleAutoReply(msg);
+      };
+
+      client.on('message', (msg: any) => handleInboundMessage(msg, 'message'));
+      client.on('message_create', (msg: any) => handleInboundMessage(msg, 'message_create'));
 
       client.on('auth_failure', (msg: string) => {
         console.error(`[WhatsApp] ${userId} auth failure:`, msg);
@@ -853,8 +862,10 @@ async function startServer() {
         if (!(settings.autoReply ?? true) || msg.fromMe || !String(msg.body || '').trim()) return;
 
         try {
-          const chat: any = await withTimeout(() => msg.getChat(), null, 3500);
-          if (chat?.isGroup || (!chat && String(msg.from || '').endsWith('@g.us'))) return;
+          // Avoid getChat() here as well: group JIDs are enough to suppress
+          // autonomous replies and keep incoming direct messages realtime.
+          const chat: any = null;
+          if (String(msg.from || '').endsWith('@g.us')) return;
 
           const chatId = String(msg.from || msg.to || 'unknown-chat');
           const currentText = String(msg.body || '').trim();
